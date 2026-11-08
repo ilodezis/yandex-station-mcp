@@ -10,13 +10,15 @@
 1. Склонируй репозиторий, если мы ещё не внутри:
    git clone https://github.com/ilodezis/yandex-station-mcp.git && cd yandex-station-mcp
 
-2. Спроси у меня локальный IP-адрес Станции (порт Dropbear обычно 2222).
+2. Спроси у меня, какой бэкенд используется:
+   - **Вариант А (SSH, по умолчанию):** полный доступ (голос через `say`, ALSA, фреймбуфер, сокет квазара). Нужен локальный IP Станции (порт Dropbear обычно 2222).
+   - **Вариант Б (Luna HTTP API):** если на колонке запущен демон `nyakokitsu/luna` (порт 8099). В этом режиме SSH-ключи не нужны, выстави `STATION_BACKEND=luna` и `LUNA_ADDR=http://<IP_СТАНЦИИ>:8099` (шаги 3 и 4 пропускаются).
 
-3. Сними фингерпринт хост-ключа Dropbear:
+3. Если выбран SSH: сними фингерпринт хост-ключа Dropbear:
    ssh-keyscan -p <PORT> -t ed25519 <IP> 2>/dev/null | ssh-keygen -lf -
    Запиши результат (вида SHA256:...) в переменную STATION_HOST_KEY.
 
-4. Проверь наличие SSH-ключа в ./secrets/station_key. Если его нет — сгенерируй:
+4. Если выбран SSH: проверь наличие SSH-ключа в ./secrets/station_key. Если его нет — сгенерируй:
    ssh-keygen -t ed25519 -N '' -C "station-mcp" -f ./secrets/station_key
    Выведи мне готовый однострочник для вставки публичного ключа на колонку:
    mount -o remount,rw / && echo "<ПУБЛИЧНЫЙ_КЛЮЧ>" >> /root/.ssh/authorized_keys && sync && mount -o remount,ro /
