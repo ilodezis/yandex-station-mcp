@@ -1,0 +1,32 @@
+# Binaries and build output
+/station-mcp
+/yandex-station-mcp
+/station-ctl
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+
+# Agent and IDE local configs
+AGENTS.md
+CLAUDE.md
+.claude/
+.gemini/
+.idea/
+.vscode/
+
+# OS and runtime files
+.DS_Store
+Thumbs.db
+*.log

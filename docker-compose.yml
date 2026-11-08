@@ -1,0 +1,16 @@
+services:
+  yandex-station-mcp:
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    container_name: yandex-station-mcp
+    env_file: .env
+    ports:
+      # Loopback only: Caddy on the host terminates TLS and forwards here.
+      - "127.0.0.1:8150:8150"
+    volumes:
+      # The speaker's SSH key, owned by uid 1000, mode 600. Never baked into the image.
+      - ${STATION_KEY_PATH:-./secrets/station_key}:/run/secrets/station_key:ro
+    restart: unless-stopped
