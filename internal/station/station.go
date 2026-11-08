@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -40,15 +39,7 @@ func DefaultConfig() Config {
 	return Config{MaxVolume: 80, MaxLEDLevel: 128, LEDOrder: [4]int{0, 1, 2, 3}, Now: time.Now}
 }
 
-// Station is the speaker as the rest of the service sees it.
-type Station struct {
-	r     Runner
-	cfg   Config
-	sayMu sync.Mutex // one phrase at a time over SSH; Alice queues the rest anyway
-}
-
-// New returns a Station that talks through r.
-func New(r Runner, cfg Config) *Station {
+func normalizeConfig(cfg Config) Config {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -58,7 +49,49 @@ func New(r Runner, cfg Config) *Station {
 	if cfg.MaxLEDLevel <= 0 || cfg.MaxLEDLevel > 255 {
 		cfg.MaxLEDLevel = 128
 	}
-	return &Station{r: r, cfg: cfg}
+	return cfg
+}
+
+// Station is the speaker as the rest of the service sees it.
+type Station struct {
+	backend Backend
+	cfg     Config
+}
+
+// New returns a Station that talks through r over SSH.
+func New(r Runner, cfg Config) *Station {
+	cfg = normalizeConfig(cfg)
+	return &Station{
+		backend: NewSSHBackend(r, cfg),
+		cfg:     cfg,
+	}
+}
+
+// NewWithBackend returns a Station driven by any Backend implementation.
+func NewWithBackend(b Backend, cfg Config) *Station {
+	cfg = normalizeConfig(cfg)
+	return &Station{
+		backend: b,
+		cfg:     cfg,
+	}
+}
+
+// Backend returns the underlying backend driver.
+func (s *Station) Backend() Backend {
+	return s.backend
+}
+
+// Runner returns the underlying Runner if the station is backed by SSH, or nil otherwise.
+func (s *Station) Runner() Runner {
+	if sb, ok := s.backend.(*SSHBackend); ok {
+		return sb.r
+	}
+	return nil
+}
+
+// Config returns the speaker driver configuration.
+func (s *Station) Config() Config {
+	return s.cfg
 }
 
 // Quote makes s one literal word for the speaker's POSIX shell.
@@ -90,44 +123,19 @@ func CleanText(s string) (string, error) {
 	return out, nil
 }
 
-// Say speaks text in Alice's voice and returns when the speaker reports TTS completed.
+// Say speaks text in Alice's voice and returns when TTS completes.
 func (s *Station) Say(ctx context.Context, text string) error {
-	clean, err := CleanText(text)
-	if err != nil {
-		return err
-	}
-	s.sayMu.Lock()
-	defer s.sayMu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	defer cancel()
-	_, err = s.r.Run(ctx, "say "+Quote(clean))
-	return err
+	return s.backend.Say(ctx, text)
 }
 
 // SetVolume sets the Master volume, percent 0..MaxVolume.
 func (s *Station) SetVolume(ctx context.Context, percent int) (int, error) {
-	if percent < 0 || percent > 100 {
-		return 0, fmt.Errorf("volume %d is out of range 0..100", percent)
-	}
-	applied := percent
-	if applied > s.cfg.MaxVolume {
-		applied = s.cfg.MaxVolume
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	_, err := s.r.Run(ctx, fmt.Sprintf("amixer set Master %d%%", applied))
-	return applied, err
+	return s.backend.SetVolume(ctx, percent)
 }
 
 // PlaySound plays one of the allowlisted signals.
 func (s *Station) PlaySound(ctx context.Context, name string) error {
-	if _, ok := Sounds[name]; !ok {
-		return fmt.Errorf("unknown sound %q, known: %s", name, strings.Join(SoundNames(), ", "))
-	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	_, err := s.r.RunStdin(ctx, "aplay -q", soundWav(name))
-	return err
+	return s.backend.PlaySound(ctx, name)
 }
 
 // SoundNames lists the allowlisted sounds, sorted.
@@ -151,30 +159,9 @@ type TimerInfo struct {
 	Seconds int
 }
 
-// Timer sets a timer that lives on the speaker (it survives a restart of this service):
-// after d it plays the timer sound and speaks text. It is a request from the user, so it
-// is audible whatever the quiet mode says.
+// Timer sets a timer that lives on the speaker.
 func (s *Station) Timer(ctx context.Context, d time.Duration, text string) (TimerInfo, error) {
-	if d < time.Second || d > MaxTimer {
-		return TimerInfo{}, fmt.Errorf("timer must be between 1 second and %s", MaxTimer)
-	}
-	clean, err := CleanText(text)
-	if err != nil {
-		return TimerInfo{}, err
-	}
-	secs := int(d.Round(time.Second) / time.Second)
-	// The id is the speaker's own clock plus the shell pid: unique without any state here.
-	cmd := fmt.Sprintf(
-		`mkdir -p %[1]s; w=%[1]s/../timer.wav; cat > "$w"; id=$(date +%%s)$$; f=%[1]s/$id; echo "$(( $(date +%%s) + %[2]d ))|"%[3]s > "$f"; `+
-			`nohup setsid sh -c 'sleep "$1"; aplay -q "$2"; say "$3"; rm -f "$4"' sh %[2]d "$w" %[3]s "$f" >/dev/null 2>&1 & echo "$id"`,
-		timersDir, secs, Quote(clean))
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	out, err := s.r.RunStdin(ctx, cmd, soundWav("timer"))
-	if err != nil {
-		return TimerInfo{}, err
-	}
-	return TimerInfo{ID: strings.TrimSpace(out), Seconds: secs}, nil
+	return s.backend.Timer(ctx, d, text)
 }
 
 // Status is what the speaker reports about itself.
@@ -206,13 +193,7 @@ const statusCmd = `amixer sget Master 2>/dev/null | tail -1; echo '--'; cat /pro
 
 // Status queries the speaker. An unreachable speaker is a result, not an error.
 func (s *Station) Status(ctx context.Context) Status {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	out, err := s.r.Run(ctx, statusCmd)
-	if err != nil {
-		return Status{Reachable: false, Error: err.Error()}
-	}
-	return parseStatus(out)
+	return s.backend.Status(ctx)
 }
 
 func parseStatus(out string) Status {
@@ -266,55 +247,20 @@ func parseStatus(out string) Status {
 // AmbientLight reads the ambient illuminance in lux from the LTR-308 sensor,
 // and returns whether the environment is considered dark (< 2.0 lux).
 func (s *Station) AmbientLight(ctx context.Context) (float64, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	out, err := s.r.Run(ctx, "cat /sys/bus/iio/devices/iio:device0/in_intensity_input 2>/dev/null")
-	if err != nil {
-		return 0, false, err
-	}
-	trimmed := strings.TrimSpace(out)
-	if trimmed == "" {
-		return 0, false, errors.New("ambient light sensor unavailable")
-	}
-	lux, err := strconv.ParseFloat(trimmed, 64)
-	if err != nil {
-		return 0, false, fmt.Errorf("parse ambient lux %q: %w", trimmed, err)
-	}
-	return lux, lux < 2.0, nil
+	return s.backend.AmbientLight(ctx)
 }
 
 // PlayerControl controls music/audio playback on the speaker.
-// Supported actions: "pause", "play" (or "resume"), "next", "prev" (or "previous"), "toggle".
 func (s *Station) PlayerControl(ctx context.Context, action string) error {
-	act := strings.ToLower(strings.TrimSpace(action))
-	switch act {
-	case "play", "resume", "continue":
-		act = "play"
-	case "pause", "stop":
-		act = "pause"
-	case "next":
-		act = "next"
-	case "prev", "previous":
-		act = "prev"
-	case "toggle":
-		act = "toggle"
-	default:
-		return fmt.Errorf("unknown player action %q, allowed: pause, play, next, prev, toggle", action)
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	_, err := s.r.Run(ctx, "station-ctl player "+act)
-	return err
+	return s.backend.PlayerControl(ctx, action)
 }
 
 // SetDND enables or disables Do Not Disturb mode on the speaker.
 func (s *Station) SetDND(ctx context.Context, enable bool) error {
-	action := "disable"
-	if enable {
-		action = "enable"
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	_, err := s.r.Run(ctx, "station-ctl dnd "+action)
-	return err
+	return s.backend.SetDND(ctx, enable)
+}
+
+// LED writes a frame to the ring.
+func (s *Station) LED(ctx context.Context, spec LEDSpec) error {
+	return s.backend.LED(ctx, spec)
 }

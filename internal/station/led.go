@@ -1,7 +1,6 @@
 package station
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -50,38 +49,6 @@ type LEDSpec struct {
 	Hold       time.Duration
 }
 
-// frame builds the 356 bytes for /dev/fb0.
-func (s *Station) frame(c RGBW, brightness int, fraction float64) []byte {
-	if brightness <= 0 {
-		brightness = 40
-	}
-	if brightness > 100 {
-		brightness = 100
-	}
-	scale := func(v uint8) byte {
-		out := int(v) * brightness / 100
-		if out > s.cfg.MaxLEDLevel {
-			out = s.cfg.MaxLEDLevel
-		}
-		return byte(out)
-	}
-	lit := LEDPixels
-	if fraction > 0 && fraction < 1 {
-		lit = int(fraction*float64(LEDPixels) + 0.5)
-		if lit < 1 {
-			lit = 1
-		}
-	}
-	buf := make([]byte, ledFrameSize)
-	px := [4]byte{scale(c.R), scale(c.G), scale(c.B), scale(c.W)}
-	for i := 0; i < lit; i++ {
-		for ch, off := range s.cfg.LEDOrder {
-			buf[i*4+off] = px[ch]
-		}
-	}
-	return buf
-}
-
 // printfEscape renders bytes as POSIX printf octal escapes (every byte, so the string is plain ASCII).
 func printfEscape(b []byte) string {
 	var sb strings.Builder
@@ -89,47 +56,6 @@ func printfEscape(b []byte) string {
 		fmt.Fprintf(&sb, `\%03o`, v)
 	}
 	return sb.String()
-}
-
-// LED writes a frame to the ring. The speaker's own animations (listening, speaking) draw over
-// it and clear the ring when they end, so this is best effort until Alice next does something.
-// With Hold > 0 the speaker itself darkens the ring afterwards, but only if the ring still shows
-// exactly our frame (a later write or one of Alice's animations is left alone).
-func (s *Station) LED(ctx context.Context, spec LEDSpec) error {
-	if spec.Hold < 0 || spec.Hold > MaxLEDHold {
-		return fmt.Errorf("hold must be between 0 and %s", MaxLEDHold)
-	}
-	if spec.Fraction < 0 || spec.Fraction > 1 {
-		return fmt.Errorf("fraction %v is out of range 0..1", spec.Fraction)
-	}
-	var data []byte
-	if strings.EqualFold(strings.TrimSpace(spec.Color), "off") {
-		data = make([]byte, ledFrameSize)
-		spec.Hold = 0
-	} else {
-		c, err := ParseColor(spec.Color)
-		if err != nil {
-			return err
-		}
-		data = s.frame(c, spec.Brightness, spec.Fraction)
-	}
-	esc := printfEscape(data)
-	id := strconv.FormatInt(s.cfg.Now().UnixNano(), 36)
-	file := fmt.Sprintf("%s/led-%s.bin", workDir, id)
-	secs := int(spec.Hold.Round(time.Second) / time.Second)
-	// Every write first claims "latest", so an older hold loop notices it was superseded and leaves
-	// the ring alone. Without a hold the frame goes straight to the ring and nothing is left behind.
-	cmd := fmt.Sprintf(`mkdir -p %[1]s; echo %[2]s > %[1]s/led.latest; `, workDir, id)
-	if spec.Hold == 0 {
-		cmd += fmt.Sprintf(`printf '%s' | dd of=/dev/fb0 bs=%d count=1 2>/dev/null`, esc, ledFrameSize)
-	} else {
-		cmd += fmt.Sprintf(`printf '%[1]s' > %[2]s; dd if=%[2]s of=/dev/fb0 bs=%[3]d count=1 2>/dev/null; `, esc, file, ledFrameSize)
-		cmd += fmt.Sprintf(`nohup setsid sh -c %s sh %d %s %s >/dev/null 2>&1 &`, Quote(holdScript(ledFrameSize)), secs, file, id)
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	_, err := s.r.Run(ctx, cmd)
-	return err
 }
 
 // holdScript runs on the speaker for the length of a hold ($1 seconds, $2 frame file, $3 write id).

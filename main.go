@@ -1,4 +1,4 @@
-// station-mcp: MCP server that controls a rooted Yandex Station 2 over SSH.
+// station-mcp: MCP server that controls a rooted Yandex Station 2 over SSH or Luna HTTP API.
 package main
 
 import (
@@ -77,6 +77,37 @@ func oauthFromEnv() (*oauth.Server, error) {
 	})
 }
 
+// buildStation instantiates the configured backend (SSH or Luna) and returns the Station.
+func buildStation(cfg station.Config) (*station.Station, error) {
+	backendType := strings.ToLower(strings.TrimSpace(env("STATION_BACKEND", "ssh")))
+	switch backendType {
+	case "luna":
+		lunaAddr := station.ResolveLunaAddr(env("LUNA_ADDR", ""), env("STATION_ADDR", "127.0.0.1:2222"))
+		lunaBackend, err := station.NewLunaBackend(station.LunaConfig{
+			BaseURL: lunaAddr,
+		}, cfg)
+		if err != nil {
+			return nil, err
+		}
+		log.Printf("station-mcp using luna backend at %s", lunaAddr)
+		return station.NewWithBackend(lunaBackend, cfg), nil
+	case "ssh", "":
+		runner, err := station.NewSSHRunner(station.SSHConfig{
+			Addr:       env("STATION_ADDR", "127.0.0.1:2222"),
+			User:       env("STATION_USER", "root"),
+			KeyFile:    env("STATION_KEY_FILE", "/run/secrets/station_key"),
+			HostKeySHA: env("STATION_HOST_KEY", ""),
+		})
+		if err != nil {
+			return nil, err
+		}
+		log.Printf("station-mcp using ssh backend at %s", env("STATION_ADDR", "127.0.0.1:2222"))
+		return station.New(runner, cfg), nil
+	default:
+		return nil, fmt.Errorf("unknown STATION_BACKEND %q (allowed: ssh, luna)", backendType)
+	}
+}
+
 func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "health" {
 		return healthCheck(env("ADDR", ":8150"))
@@ -95,18 +126,12 @@ func run() error {
 		return err
 	}
 
-	runner, err := station.NewSSHRunner(station.SSHConfig{
-		Addr:       env("STATION_ADDR", "127.0.0.1:2222"),
-		User:       env("STATION_USER", "root"),
-		KeyFile:    env("STATION_KEY_FILE", "/run/secrets/station_key"),
-		HostKeySHA: env("STATION_HOST_KEY", ""),
-	})
+	cfg := station.DefaultConfig()
+	cfg.MaxVolume, cfg.MaxLEDLevel = maxVol, maxLED
+	st, err := buildStation(cfg)
 	if err != nil {
 		return err
 	}
-	cfg := station.DefaultConfig()
-	cfg.MaxVolume, cfg.MaxLEDLevel = maxVol, maxLED
-	st := station.New(runner, cfg)
 
 	q, err := quiet.NewClock(env("QUIET_FROM", "23:00"), env("QUIET_TO", "08:00"), env("TIMEZONE", "Europe/Moscow"))
 	if err != nil {

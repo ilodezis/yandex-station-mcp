@@ -149,3 +149,81 @@ func TestLiveDND(t *testing.T) {
 		t.Fatalf("dnd disable: %v", err)
 	}
 }
+
+
+func liveLuna(t *testing.T) *station.Station {
+	t.Helper()
+	addr := os.Getenv("LUNA_ADDR")
+	if addr == "" {
+		addr = "http://192.168.2.141:8099/api"
+	}
+	b, err := station.NewLunaBackend(station.LunaConfig{BaseURL: addr}, station.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return station.NewWithBackend(b, station.DefaultConfig())
+}
+
+func TestLiveLunaStatus(t *testing.T) {
+	s := liveLuna(t)
+	st := s.Status(context.Background())
+	if !st.Reachable {
+		t.Fatalf("luna unreachable: %s", st.Error)
+	}
+	t.Logf("live luna status: reachable=%v vol=%d lux=%.4f is_dark=%v pixel=%s",
+		st.Reachable, st.VolumePercent, st.AmbientLux, st.IsDark, st.LEDFirstPixel)
+}
+
+func TestLiveLunaAmbientLight(t *testing.T) {
+	s := liveLuna(t)
+	lux, dark, err := s.AmbientLight(context.Background())
+	if err != nil {
+		t.Fatalf("ambient light: %v", err)
+	}
+	t.Logf("live luna ambient light: lux=%.4f dark=%v", lux, dark)
+}
+
+func TestLiveLunaLED(t *testing.T) {
+	s := liveLuna(t)
+	ctx := context.Background()
+	// Subtle test: set dim purple for 2 seconds
+	err := s.LED(ctx, station.LEDSpec{
+		Color:      "#4b0082",
+		Brightness: 10,
+		Hold:       2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("led: %v", err)
+	}
+	st := s.Status(ctx)
+	t.Logf("led first pixel after write: %s", st.LEDFirstPixel)
+	if st.LEDFirstPixel == "00000000" {
+		t.Errorf("ring should not be dark right after write")
+	}
+
+	time.Sleep(3 * time.Second)
+	stAfter := s.Status(ctx)
+	t.Logf("led first pixel after hold expired: %s", stAfter.LEDFirstPixel)
+}
+
+func TestLiveLunaSetVolume(t *testing.T) {
+	s := liveLuna(t)
+	ctx := context.Background()
+	vol, err := s.SetVolume(ctx, 80)
+	if err != nil {
+		t.Fatalf("set volume: %v", err)
+	}
+	if vol != 80 {
+		t.Errorf("expected 80, got %d", vol)
+	}
+}
+
+func TestLiveLunaPlayerPause(t *testing.T) {
+	s := liveLuna(t)
+	ctx := context.Background()
+	err := s.PlayerControl(ctx, "pause")
+	if err != nil && !strings.Contains(err.Error(), "no media provider selected") {
+		t.Fatalf("player pause: %v", err)
+	}
+	t.Logf("player pause result: %v", err)
+}

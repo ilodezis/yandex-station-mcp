@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/ilodezis/yandex-station-mcp/internal/station"
+)
 
 func setOAuthEnv(t *testing.T, vals map[string]string) {
 	t.Helper()
@@ -46,5 +51,34 @@ func TestBadTTLIsAnError(t *testing.T) {
 	})
 	if _, err := oauthFromEnv(); err == nil {
 		t.Error("non-numeric TTL accepted")
+	}
+}
+
+func TestBuildStationBackendSelection(t *testing.T) {
+	cfg := station.DefaultConfig()
+
+	// Unknown backend
+	t.Setenv("STATION_BACKEND", "invalid_backend")
+	if _, err := buildStation(cfg); err == nil || !strings.Contains(err.Error(), "unknown STATION_BACKEND") {
+		t.Errorf("expected error on unknown backend, got %v", err)
+	}
+
+	// Luna backend
+	t.Setenv("STATION_BACKEND", "luna")
+	t.Setenv("LUNA_ADDR", "http://127.0.0.1:8099")
+	st, err := buildStation(cfg)
+	if err != nil {
+		t.Fatalf("luna buildStation error: %v", err)
+	}
+	if _, ok := st.Backend().(*station.LunaBackend); !ok {
+		t.Errorf("backend is %T, want *station.LunaBackend", st.Backend())
+	}
+
+	// SSH backend with missing key fails
+	t.Setenv("STATION_BACKEND", "ssh")
+	t.Setenv("STATION_KEY_FILE", "/nonexistent/key/file")
+	t.Setenv("STATION_HOST_KEY", "SHA256:dummy")
+	if _, err := buildStation(cfg); err == nil {
+		t.Error("ssh buildStation with missing key must fail")
 	}
 }
