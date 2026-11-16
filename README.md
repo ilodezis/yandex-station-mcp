@@ -60,7 +60,7 @@
 
 | Инструмент | Параметры | Описание | Профиль `agent` | Профиль `brain` |
 |---|---|---|---|---|
-| `announce` | `text`, `urgency` (`info`, `important`, `critical`) | Умное уведомление с учётом времени суток и квот. | Да | Нет |
+| `announce` | `text`, `urgency` (`info`, `important`, `critical`), `voice` (`alyss`, `jane`, `oksana`, `omazh`, `zahar`, `ermil`), `effect` (`megaphone`, `hamster`) | Умное уведомление с учётом времени суток и квот, нужным голосом. | Да | Нет |
 | `set_volume` | `percent` (0–100) | Установка мастер-громкости (ограничена потолком `MAX_VOLUME`). | Да | Да |
 | `status` | *(нет)* | Доступность, громкость, аптайм, активные таймеры, состояние кольца, люксы, ночной режим. | Да | Да |
 | `ambient_light` | *(нет)* | Чтение уровня света в люксах и флага темноты с датчика LTR-308. | Да | Да |
@@ -221,7 +221,7 @@ Your AI agent shouldn't scream in the middle of the night because a background u
 
 | Tool | Parameters | Description | `agent` Profile | `brain` Profile |
 |---|---|---|---|---|
-| `announce` | `text`, `urgency` (`info`, `important`, `critical`) | Context-aware notifications (voice by day, ambient glow by night). | Yes | No |
+| `announce` | `text`, `urgency` (`info`, `important`, `critical`), `voice` (`alyss`, `jane`, `oksana`, `omazh`, `zahar`, `ermil`), `effect` (`megaphone`, `hamster`) | Context-aware notifications (voice by day, ambient glow by night), in a chosen TTS voice. | Yes | No |
 | `set_volume` | `percent` (0–100) | Master volume adjustment (capped at `MAX_VOLUME`). | Yes | Yes |
 | `status` | *(none)* | Speaker health, volume, uptime, active timers, LED state, lux, quiet mode. | Yes | Yes |
 | `ambient_light` | *(none)* | Ambient illuminance reading (lux and dark boolean) from LTR-308. | Yes | Yes |

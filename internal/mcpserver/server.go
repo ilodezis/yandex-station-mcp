@@ -53,6 +53,8 @@ type Options struct {
 type AnnounceIn struct {
 	Text    string `json:"text" jsonschema:"what to say, up to 500 characters, plain sentences without markup"`
 	Urgency string `json:"urgency,omitempty" jsonschema:"info (default), important or critical. The speaker decides by itself whether this is voice, a coloured ring or silence, depending on the time of day"`
+	Voice   string `json:"voice,omitempty" jsonschema:"optional TTS voice: alyss (Alice, the default), jane, oksana, omazh, zahar or ermil"`
+	Effect  string `json:"effect,omitempty" jsonschema:"optional TTS effect: megaphone or hamster; combines with voice"`
 }
 
 // AnnounceOut is the output of the announce tool.
@@ -168,7 +170,11 @@ func New(p Profile, svc *service.Service, opt Options) *mcp.Server {
 			if err != nil {
 				return nil, AnnounceOut{}, err
 			}
-			d, err := svc.Announce(ctx, in.Text, u)
+			text, err := station.Styled(in.Text, in.Voice, in.Effect)
+			if err != nil {
+				return nil, AnnounceOut{}, err
+			}
+			d, err := svc.Announce(ctx, text, u)
 			if err != nil {
 				return nil, AnnounceOut{}, err
 			}

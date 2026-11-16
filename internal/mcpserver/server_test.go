@@ -268,6 +268,29 @@ func TestDNDTool(t *testing.T) {
 	}
 }
 
+func TestAnnounceVoiceAndEffect(t *testing.T) {
+	r := newRig(t, false, true)
+	res := call(t, r.connect(t, agentTok), "announce", map[string]any{"text": "йогурт в розыске", "voice": "zahar", "effect": "megaphone"})
+	if res.IsError {
+		t.Fatalf("%+v", res.Content)
+	}
+	want := `say '<speaker voice="zahar" effect="megaphone">йогурт в розыске'`
+	if c := r.fake.Commands(); len(c) != 1 || c[0] != want {
+		t.Errorf("commands = %q, want %q", c, want)
+	}
+}
+
+func TestAnnounceUnknownVoiceSaysNothing(t *testing.T) {
+	r := newRig(t, false, true)
+	res := call(t, r.connect(t, agentTok), "announce", map[string]any{"text": "тест", "voice": "filipp"})
+	if !res.IsError {
+		t.Fatal("unknown voice accepted")
+	}
+	if c := r.fake.Commands(); len(c) != 0 {
+		t.Errorf("commands = %q, want none", c)
+	}
+}
+
 func TestAnnounceKeepsCyrillicBytesFromMCPToSpeaker(t *testing.T) {
 	r := newRig(t, false, true)
 	const phrase = "Сессия ждёт ответа: проверь, пожалуйста — ёжик, щука, Ъ"
